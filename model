@@ -1,0 +1,168 @@
+import yfinance as yf
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+from scipy.optimize import minimize
+from sklearn.ensemble import RandomForestRegressor
+from hmmlearn import hmm
+from keras.models import Sequential
+from keras.layers import Dense, LSTM
+from typing import Dict
+
+class SimpleExecutionEngine:
+    def optimize_execution(self, target_portfolio, current_portfolio, market_data):
+        # Simple execution logic: adjust weights based on target portfolio
+        execution_plan = target_portfolio.copy()
+        return execution_plan
+
+class EnhancedRenaissanceSystem:
+    def __init__(self):
+        self.execution_engine = SimpleExecutionEngine()
+        self.models = {
+            'random_forest': RandomForestRegressor(),
+            'hmm': None,
+            'rnn': None
+        }
+
+    def train(self, returns_dict, market_data):
+        # Prepare data for training models
+        returns = pd.DataFrame(returns_dict)
+        X = returns.values[:-1]  # All but last row for features
+        y = returns.values[1:]    # All but first row for target
+        
+        # Train Random Forest
+        self.models['random_forest'].fit(X, y)
+
+        # Train HMM
+        self.models['hmm'] = hmm.GaussianHMM(n_components=3)  # Example: 3 hidden states
+        self.models['hmm'].fit(X)
+
+        # Train RNN (LSTM)
+        self.models['rnn'] = Sequential()
+        self.models['rnn'].add(LSTM(50, return_sequences=True, input_shape=(X.shape[1], 1)))
+        self.models['rnn'].add(LSTM(50))
+        self.models['rnn'].add(Dense(1))
+        
+        # Reshape X for LSTM [samples, time steps, features]
+        X_reshaped = X.reshape((X.shape[0], X.shape[1], 1))
+        
+        self.models['rnn'].compile(optimizer='adam', loss='mean_squared_error')
+        self.models['rnn'].fit(X_reshaped, y, epochs=50, batch_size=32)
+
+    def generate_portfolio(self, returns_dict, market_data):
+        # Optimize portfolio weights using mean-variance optimization
+        optimized_weights = self.optimize_portfolio(returns_dict)
+        portfolio = pd.DataFrame(index=returns_dict.keys(), columns=['weight'])
+        portfolio['weight'] = optimized_weights
+        return portfolio
+
+    def optimize_portfolio(self, returns_dict):
+        # Convert returns_dict to a DataFrame
+        returns = pd.DataFrame(returns_dict)
+        
+        # Calculate the covariance matrix
+        cov_matrix = returns.cov()
+        
+        # Define the objective function (minimize negative Sharpe ratio)
+        def objective(weights):
+            portfolio_return = np.sum(returns.mean() * weights) * 252  # Annualized return
+            portfolio_volatility = np.sqrt(np.dot(weights.T, np.dot(cov_matrix, weights))) * np.sqrt(252)  # Annualized volatility
+            return -portfolio_return / portfolio_volatility  # Negative Sharpe ratio
+
+        # Constraints: weights sum to 1
+        constraints = ({'type': 'eq', 'fun': lambda x: np.sum(x) - 1})
+        
+        # Bounds for weights
+        bounds = tuple((0, 1) for asset in range(len(returns.columns)))
+        
+        # Initial guess (equal weights)
+        initial_weights = [1. / len(returns.columns)] * len(returns.columns)
+        
+        # Optimize
+        result = minimize(objective, initial_weights, method='SLSQP', bounds=bounds, constraints=constraints)
+        
+        return result.x  # Optimized weights
+
+    def execute_portfolio(self, target_portfolio: pd.DataFrame,
+                           current_portfolio: pd.DataFrame,
+                           market_data: Dict[str, pd.DataFrame]) -> pd.DataFrame:
+        return self.execution_engine.optimize_execution(
+            target_portfolio,
+            current_portfolio,
+            market_data
+        )
+
+    def evaluate_performance(self, portfolio: pd.DataFrame, price_data: pd.DataFrame):
+        # Calculate portfolio returns
+        portfolio_returns = (price_data.pct_change() * portfolio['weight']).sum(axis=1).dropna()
+        
+        cumulative_portfolio_returns = (1 + portfolio_returns).cumprod() - 1
+        
+        # Calculate benchmark returns (using SPY as a benchmark)
+        benchmark_returns = price_data['SPY'].pct_change().dropna()
+        
+        cumulative_benchmark_returns = (1 + benchmark_returns).cumprod() - 1
+        
+        # Calculate net returns percentage for portfolio and benchmark
+        net_returns_percentage_portfolio = cumulative_portfolio_returns.iloc[-1] * 100
+        net_returns_percentage_benchmark = cumulative_benchmark_returns.iloc[-1] * 100
+        
+        print(f"Net Returns Percentage of Portfolio: {net_returns_percentage_portfolio:.2f}%")
+        print(f"Net Returns Percentage of Benchmark (SPY): {net_returns_percentage_benchmark:.2f}%")
+        
+        return cumulative_portfolio_returns, cumulative_benchmark_returns
+
+def fetch_data(tickers, start_date, end_date):
+    # Fetch historical data from yfinance
+    data = yf.download(tickers, start=start_date, end=end_date)
+    return data['Adj Close']  # Return adjusted close prices
+
+def demonstrate_usage():
+    # Define the assets and date range from 2005 to 2024
+    assets = ['SPY', 'QQQ', 'IWM', 'GLD', 'TLT']
+    start_date = '2005-01-01'  # Start date updated to January 1, 2005
+    end_date = '2024-11-01'     # End date updated to November 1, 2024
+    
+    # Fetch historical price data
+    price_data = fetch_data(assets, start_date, end_date)
+    
+    # Calculate daily returns
+    returns_dict = {asset: price_data[asset].pct_change().dropna() for asset in assets}
+    
+    # Initialize and train system
+    system = EnhancedRenaissanceSystem()
+    system.train(returns_dict, price_data)
+    
+    # Generate portfolio
+    portfolio = system.generate_portfolio(returns_dict, price_data)
+    
+    # Execute portfolio changes
+    current_portfolio = pd.DataFrame()  # Empty current portfolio
+    execution_plan = system.execute_portfolio(portfolio, current_portfolio, price_data)
+    
+    print("\nPortfolio Allocations:")
+    print(portfolio)
+    print("\nExecution Plan:")
+    print(execution_plan)
+    
+    # Evaluate performance
+    cumulative_portfolio_returns, cumulative_benchmark_returns = system.evaluate_performance(portfolio, price_data)
+    
+    print("\nCumulative Portfolio Returns:")
+    print(cumulative_portfolio_returns)
+    print("\nCumulative Benchmark Returns (SPY):")
+    print(cumulative_benchmark_returns)
+
+    # Plot the results
+    plt.figure(figsize=(12, 6))
+    plt.plot(cumulative_portfolio_returns.index, cumulative_portfolio_returns, label='Portfolio Returns', color='blue')
+    plt.plot(cumulative_benchmark_returns.index, cumulative_benchmark_returns, label='SPY Returns', color='orange')
+    plt.title('Cumulative Returns: Portfolio vs SPY')
+    plt.xlabel('Date')
+    plt.ylabel('Cumulative Returns')
+    plt.legend()
+    plt.grid()
+    plt.show()
+
+if __name__ == "__main__":
+    demonstrate_usage()
